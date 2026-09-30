@@ -20,7 +20,8 @@ document.addEventListener('DOMContentLoaded', function () {
   var toastText = document.getElementById('toast-text');
 
   // 로컬 스토리지 키
-  var STORAGE_KEY = 'quicklink_short_history';
+  var STORAGE_KEY = 'quicklink_short_history_api_v2';
+  var isLoading = false;
 
   // ----------------------------------------------------
   // 3-2. 입력 필드가 비어있으면 '단축하기'버튼 비활성화
@@ -28,7 +29,7 @@ document.addEventListener('DOMContentLoaded', function () {
   function validateInput() {
     var val = urlInput.value.trim();
     if (val.length > 0) {
-      shortenBtn.disabled = false;
+      shortenBtn.disabled = isLoading;
       clearInputBtn.style.display = 'flex';
     } else {
       shortenBtn.disabled = true;
@@ -96,11 +97,11 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   // ----------------------------------------------------
-  // JSONP 요청 헬퍼 (CORS 및 file:/// 환경 완벽 우회)
+  // 서비스에서 지원하는 JSONP 요청
   // ----------------------------------------------------
   function fetchJsonp(baseUrl, timeoutMs) {
     return new Promise(function (resolve, reject) {
-      timeoutMs = timeoutMs || 4000;
+      timeoutMs = timeoutMs || 12000;
       var callbackName = '_cb_short_' + Math.random().toString(36).substring(2) + '_' + Date.now();
       var script = document.createElement('script');
       var timeoutId = null;
@@ -119,7 +120,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
       window[callbackName] = function (data) {
         cleanup();
-        if (data && data.shorturl) {
+        if (data && typeof data.shorturl === 'string' && /^https?:\/\/(is\.gd|v\.gd)\/[A-Za-z0-9_]+$/.test(data.shorturl)) {
           resolve(data.shorturl);
         } else if (data && data.errormessage) {
           reject(new Error(data.errormessage));
@@ -144,110 +145,29 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // 일반 Fetch 요청 헬퍼 (CORS 가능 환경)
-  function fetchUrl(endpoint, timeoutMs) {
-    return new Promise(function (resolve, reject) {
-      if (typeof fetch === 'undefined') {
-        return reject(new Error('Fetch 미지원 브라우저'));
-      }
-      timeoutMs = timeoutMs || 3500;
-      var timer = setTimeout(function () {
-        reject(new Error('Fetch 시간 초과'));
-      }, timeoutMs);
-
-      fetch(endpoint)
-        .then(function (res) {
-          clearTimeout(timer);
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          return res.json();
-        })
-        .then(function (data) {
-          if (data && data.shorturl) {
-            resolve(data.shorturl);
-          } else if (data && data.errormessage) {
-            reject(new Error(data.errormessage));
-          } else {
-            reject(new Error('응답 데이터 오류'));
-          }
-        })
-        .catch(function (err) {
-          clearTimeout(timer);
-          reject(err);
-        });
-    });
-  }
-
-  // ----------------------------------------------------
-  // 3-3. 다중 OpenAPI 및 Fallback 연동 아키텍처
-  // ----------------------------------------------------
+  // 실제 서비스가 발급한 주소만 반환. 실패 시 주소를 임의 생성하지 않음.
   async function requestShorten(targetUrl) {
     var encoded = encodeURIComponent(targetUrl);
-    var specificError = null;
-
-    // 1단계: is.gd JSONP (file:/// 및 모든 브라우저 CORS 100% 무사 통과)
-    try {
-      var shortUrl = await fetchJsonp('https://is.gd/create.php?format=json&url=' + encoded, 4000);
-      if (shortUrl) return shortUrl;
-    } catch (e) {
-      if (e.message && e.message.toLowerCase().indexOf('valid url') !== -1) {
-        specificError = '유효한 웹사이트 주소(URL)를 입력해주세요.';
+    var endpoints = ['https://is.gd/create.php', 'https://v.gd/create.php'];
+    for (var i = 0; i < endpoints.length; i++) {
+      try {
+        return await fetchJsonp(endpoints[i] + '?format=json&url=' + encoded, 12000);
+      } catch (err) {
+        console.warn('단축 서비스 응답:', err.message);
       }
-      console.warn('is.gd JSONP 시도:', e.message);
     }
-
-    // 2단계: v.gd JSONP
-    try {
-      var shortUrl2 = await fetchJsonp('https://v.gd/create.php?format=json&url=' + encoded, 4000);
-      if (shortUrl2) return shortUrl2;
-    } catch (e) {
-      if (e.message && e.message.toLowerCase().indexOf('valid url') !== -1) {
-        specificError = '유효한 웹사이트 주소(URL)를 입력해주세요.';
-      }
-      console.warn('v.gd JSONP 시도:', e.message);
-    }
-
-    // 3단계: is.gd Fetch
-    try {
-      var shortUrl3 = await fetchUrl('https://is.gd/create.php?format=json&url=' + encoded, 3500);
-      if (shortUrl3) return shortUrl3;
-    } catch (e) {
-      console.warn('is.gd fetch 시도:', e.message);
-    }
-
-    // 4단계: TinyURL (AllOrigins 프록시 우회)
-    try {
-      var tinyTarget = 'https://tinyurl.com/api-create.php?url=' + encoded;
-      var proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(tinyTarget);
-      var res = await fetch(proxy);
-      if (res.ok) {
-        var text = await res.text();
-        if (text && text.trim().indexOf('http') === 0) {
-          return text.trim();
-        }
-      }
-    } catch (e) {
-      console.warn('TinyURL 프록시 시도:', e.message);
-    }
-
-    // 구체적인 URL 형식 에러가 있었다면 친절히 전달
-    if (specificError) {
-      throw new Error(specificError);
-    }
-
-    // 5단계: 로컬 안전망 (오프라인 / 인트라넷 환경에서도 즉시 작동)
-    console.warn('외부 단축 API 응답 제한 -> 로컬 고속 단축 URL 생성');
-    var hash = Math.abs(
-      targetUrl.split('').reduce(function (a, b) {
-        return ((a << 5) - a) + b.charCodeAt(0);
-      }, 0)
-    ).toString(36).substring(0, 6);
-
-    return 'https://is.gd/' + hash;
+    throw new Error('단축 서비스에 연결하지 못했거나 주소가 거절되었습니다. 단축 주소는 생성되지 않았습니다. 인터넷 연결과 입력 주소를 확인하고 잠시 후 다시 시도해주세요.');
   }
 
   // 단축 실행 핸들러
   async function handleShorten() {
+    if (isLoading) return;
     hideError();
+    resultContainer.classList.remove('result-visible');
+    resultContainer.classList.add('result-hidden');
+    outputUrl.value = '';
+    openLinkBtn.removeAttribute('href');
+    makeQrBtn.onclick = null;
     var rawUrl = urlInput.value.trim();
     if (!rawUrl) {
       showError('단축할 URL을 입력해주세요.');
@@ -263,6 +183,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var targetUrl = check.url;
 
     // 로딩 상태 표시
+    isLoading = true;
     shortenBtn.disabled = true;
     btnSpinner.style.display = 'inline-block';
     btnText.textContent = '단축 중...';
@@ -272,7 +193,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
       // 3-1, 3-3. 읽기 전용 출력 상자에 채우기
       outputUrl.value = shortUrl;
-      openLinkBtn.href = targetUrl;
+      openLinkBtn.href = shortUrl;
 
       // QR코드 생성기로 이동 연동
       makeQrBtn.onclick = function () {
@@ -294,6 +215,7 @@ document.addEventListener('DOMContentLoaded', function () {
       showError(err.message || 'URL을 단축하는 중 문제가 발생했습니다. 주소를 다시 확인해주세요.');
     } finally {
       // 로딩 복구
+      isLoading = false;
       btnSpinner.style.display = 'none';
       btnText.textContent = '단축하기';
       validateInput();
@@ -355,7 +277,10 @@ document.addEventListener('DOMContentLoaded', function () {
   function loadHistory() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      var items = raw ? JSON.parse(raw) : [];
+      return Array.isArray(items) ? items.filter(function (item) {
+        return item && typeof item.shortened === 'string' && /^https?:\/\/(is\.gd|v\.gd)\/[A-Za-z0-9_]+$/.test(item.shortened);
+      }) : [];
     } catch (e) {
       return [];
     }
@@ -401,6 +326,7 @@ document.addEventListener('DOMContentLoaded', function () {
       shortLink.className = 'history-short';
       shortLink.href = item.shortened;
       shortLink.target = '_blank';
+      shortLink.rel = 'noopener noreferrer';
       shortLink.textContent = item.shortened;
 
       var origSpan = document.createElement('span');
@@ -414,13 +340,13 @@ document.addEventListener('DOMContentLoaded', function () {
       copyItemBtn.className = 'history-copy-btn';
       copyItemBtn.textContent = '복사';
       copyItemBtn.onclick = async function () {
-        if (navigator.clipboard) {
-          try {
-            await navigator.clipboard.writeText(item.shortened);
-          } catch (e) {}
+        try {
+          await navigator.clipboard.writeText(item.shortened);
+          showToast('복사하였습니다');
+          alert('복사하였습니다');
+        } catch (e) {
+          window.prompt('아래 주소를 복사해주세요.', item.shortened);
         }
-        showToast('복사하였습니다');
-        alert('복사하였습니다');
       };
 
       li.appendChild(urlsDiv);
