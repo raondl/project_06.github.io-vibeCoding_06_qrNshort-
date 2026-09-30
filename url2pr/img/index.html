@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR 코드 생성기</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <img src="img/logo.png" alt="Logo" class="logo">
+  </header>
+  
+  <main>
+    <div id="qr-container" class="qr-hidden">
+      <div class="qr-card">
+        <div id="qrcode" class="qr-box"></div>
+        <p class="instruction">QR코드를 클릭하면 JPG로 다운로드됩니다</p>
+      </div>
+    </div>
+    
+    <div id="input-container" class="center-pos">
+      <div class="input-wrapper glass">
+        <input type="url" id="url-input" placeholder="웹사이트 URL을 입력하세요..." required />
+        <button id="generate-btn">생성하기</button>
+      </div>
+    </div>
+  </main>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
